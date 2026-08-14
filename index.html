@@ -410,6 +410,8 @@ main {
         <button data-window="900" type="button" aria-pressed="true">15m</button>
         <button data-window="3600" type="button">1h</button>
         <button data-window="21600" type="button">6h</button>
+        <button data-window="86400" type="button">24h</button>
+        <button id="custom-range-btn" type="button" title="Custom Range">Custom</button>
       </div>
       <button class="icon-btn" id="theme-btn" type="button" aria-label="Switch theme" title="Light / dark / system theme">
         <svg viewBox="0 0 24 24" class="i-sun" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M21.5 12h-2.2M4.7 12H2.5M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6M18.7 18.7l-1.6-1.6M6.9 6.9L5.3 5.3"/></svg>
@@ -977,10 +979,25 @@ const App = {
     Theme.init();
     $('#theme-btn').addEventListener('click', () => Theme.cycle());
     $$('.seg [data-window]').forEach(b => b.addEventListener('click', () => {
-      $$('.seg [data-window]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      $$('.seg button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      b.setAttribute('aria-pressed', 'true');
       this.window = +b.dataset.window;
       this.hist();
     }));
+    const customBtn = $('#custom-range-btn');
+    if (customBtn) {
+      customBtn.addEventListener('click', () => {
+        const val = prompt('Enter custom time range in minutes (e.g. 30, 120, 1440 for 24h):', Math.round(this.window / 60));
+        if (val && !isNaN(val) && +val > 0) {
+          const mins = Math.max(1, Math.min(10080, +val)); // up to 7 days
+          this.window = mins * 60;
+          $$('.seg button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+          customBtn.setAttribute('aria-pressed', 'true');
+          customBtn.textContent = mins >= 60 ? `${(mins/60).toFixed(mins % 60 === 0 ? 0 : 1)}h` : `${mins}m`;
+          this.hist();
+        }
+      });
+    }
     $$('[data-filter]').forEach(b => b.addEventListener('click', () => {
       $$('[data-filter]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
       this.appFilter = b.dataset.filter;
