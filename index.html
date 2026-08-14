@@ -391,6 +391,36 @@ main {
   body { background: #fff; }
   .card, .tile { box-shadow: none; break-inside: avoid; }
 }
+
+/* ── Modal / Dialog ────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center; z-index: 999;
+  opacity: 0; pointer-events: none; transition: opacity .2s ease;
+}
+.modal-backdrop.open { opacity: 1; pointer-events: auto; }
+.modal-card {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--r); padding: 22px; width: 100%; max-width: 420px;
+  box-shadow: var(--shadow-lift); display: flex; flex-direction: column; gap: 16px;
+}
+.modal-card h3 { margin: 0; font-size: 17px; font-weight: 650; color: var(--ink); }
+.modal-field { display: flex; flex-direction: column; gap: 6px; }
+.modal-field label { font-size: 12.5px; font-weight: 550; color: var(--ink-2); }
+.modal-field input[type="datetime-local"] {
+  font-family: inherit; font-size: 13.5px; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--ink);
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.modal-btn {
+  appearance: none; border: 0; cursor: pointer; font: inherit; font-size: 13px; font-weight: 550;
+  padding: 8px 14px; border-radius: 8px; transition: background .16s;
+}
+.modal-btn.secondary { background: var(--surface-2); color: var(--ink-2); }
+.modal-btn.secondary:hover { background: var(--surface-hover); color: var(--ink); }
+.modal-btn.primary { background: var(--s1); color: #fff; }
+.modal-btn.primary:hover { opacity: 0.9; }
+
 </style>
 </head>
 <body>
@@ -663,20 +693,24 @@ const ND = {
   },
   /* Single chart, all its dimensions. Netdata returns newest-first. */
   async v1(chart, opt = {}) {
-    const q = new URLSearchParams({
+    const params = {
       chart, after: opt.after ?? -1, points: opt.points ?? 1,
       group: opt.group ?? 'average', format: 'json',
-    });
+    };
+    if (opt.before) params.before = opt.before;
+    const q = new URLSearchParams(params);
     const d = await this.json('/api/v1/data?' + q);
     if (!d || !d.labels || !d.data) return null;
     return shape(d.labels, d.data.slice().reverse());
   },
   /* One value per instance across a context — one request instead of N. */
   async v2(contexts, opt = {}) {
-    const q = new URLSearchParams({
+    const params = {
       contexts, group_by: 'instance', group_by_aggregation: opt.agg ?? 'sum',
       after: opt.after ?? -1, points: opt.points ?? 1, format: 'json',
-    });
+    };
+    if (opt.before) params.before = opt.before;
+    const q = new URLSearchParams(params);
     const d = await this.json('/api/v2/data?' + q);
     const r = (d && d.result) || {};
     if (!r.labels || !r.data) return null;
@@ -978,24 +1012,65 @@ const App = {
   async init() {
     Theme.init();
     $('#theme-btn').addEventListener('click', () => Theme.cycle());
+    this.customRange = null;
     $$('.seg [data-window]').forEach(b => b.addEventListener('click', () => {
+      this.customRange = null;
+      const cBtn = $('#custom-range-btn');
+      if (cBtn) cBtn.textContent = 'Custom';
       $$('.seg button').forEach(x => x.setAttribute('aria-pressed', 'false'));
       b.setAttribute('aria-pressed', 'true');
       this.window = +b.dataset.window;
       this.hist();
     }));
+
+    const modal = $('#range-modal');
     const customBtn = $('#custom-range-btn');
-    if (customBtn) {
+    const startInput = $('#start-time');
+    const endInput = $('#end-time');
+    const cancelBtn = $('#modal-cancel');
+    const applyBtn = $('#modal-apply');
+
+    const toLocalISO = (d) => {
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    if (customBtn && modal) {
       customBtn.addEventListener('click', () => {
-        const val = prompt('Enter custom time range in minutes (e.g. 30, 120, 1440 for 24h):', Math.round(this.window / 60));
-        if (val && !isNaN(val) && +val > 0) {
-          const mins = Math.max(1, Math.min(10080, +val)); // up to 7 days
-          this.window = mins * 60;
-          $$('.seg button').forEach(x => x.setAttribute('aria-pressed', 'false'));
-          customBtn.setAttribute('aria-pressed', 'true');
-          customBtn.textContent = mins >= 60 ? `${(mins/60).toFixed(mins % 60 === 0 ? 0 : 1)}h` : `${mins}m`;
-          this.hist();
+        const now = new Date();
+        const start = new Date(now.getTime() - (this.window || 3600) * 1000);
+        startInput.value = toLocalISO(start);
+        endInput.value = toLocalISO(now);
+        modal.classList.add('open');
+      });
+
+      cancelBtn.addEventListener('click', () => modal.classList.remove('open'));
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.remove('open');
+      });
+
+      applyBtn.addEventListener('click', () => {
+        if (!startInput.value || !endInput.value) {
+          alert('Please select both Start Date and End Date.');
+          return;
         }
+        const startDate = new Date(startInput.value);
+        const endDate = new Date(endInput.value);
+
+        if (startDate >= endDate) {
+          alert('Start date/time must be earlier than end date/time.');
+          return;
+        }
+
+        const startSec = Math.floor(startDate.getTime() / 1000);
+        const endSec = Math.floor(endDate.getTime() / 1000);
+
+        this.customRange = { after: startSec, before: endSec };
+        $$('.seg button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+        customBtn.setAttribute('aria-pressed', 'true');
+        customBtn.textContent = 'Custom Range';
+        modal.classList.remove('open');
+        this.hist();
       });
     }
     $$('[data-filter]').forEach(b => b.addEventListener('click', () => {
@@ -1196,8 +1271,13 @@ const App = {
   /* ── history: the six charts ──────────────────────────────────── */
   async hist() {
     const R = this.r;
-    const pts = this.window <= 300 ? 60 : this.window <= 900 ? 90 : 120;
-    const o = { after: -this.window, points: pts };
+    let o;
+    if (this.customRange) {
+      o = { after: this.customRange.after, before: this.customRange.before, points: 120 };
+    } else {
+      const pts = this.window <= 300 ? 60 : this.window <= 900 ? 90 : 120;
+      o = { after: -this.window, points: pts };
+    }
     const [cpu, ram, net, io, power, temp] = await Promise.all([
       safe(ND.v1(R.cpu, o)), safe(ND.v1(R.ram, o)), safe(ND.v1(R.net, o)), safe(ND.v1(R.io, o)),
       R.power ? safe(ND.v1(R.power, o)) : null, R.temp ? safe(ND.v1(R.temp, o)) : null,
@@ -1530,5 +1610,24 @@ const App = {
 
 document.addEventListener('DOMContentLoaded', () => App.init());
 </script>
+
+<div class="modal-backdrop" id="range-modal" aria-hidden="true">
+  <div class="modal-card" role="dialog" aria-labelledby="modal-title">
+    <h3 id="modal-title">Custom Time Range</h3>
+    <div class="modal-field">
+      <label for="start-time">Start Date & Time</label>
+      <input type="datetime-local" id="start-time">
+    </div>
+    <div class="modal-field">
+      <label for="end-time">End Date & Time</label>
+      <input type="datetime-local" id="end-time">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="modal-btn secondary" id="modal-cancel">Cancel</button>
+      <button type="button" class="modal-btn primary" id="modal-apply">Apply Range</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
